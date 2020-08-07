@@ -34,14 +34,14 @@ from vgg import ClsVGG
 from acsconv.converters import ACSConverter, Conv3dConverter, Conv2_5dConverter
 from load_pretrained_weights_funcs import load_mednet_pretrained_weights, load_video_pretrained_weights
 
-def main(save_path=cfg.save, 
+def main(save_path=cfg.save,      # cfg 为配置文件
          n_epochs=cfg.n_epochs, 
          seed=cfg.seed
          ):
     # set seed
     if seed is not None:
         set_seed(cfg.seed)
-    cudnn.benchmark = True
+    cudnn.benchmark = True   # 提高效率
     # back up your code
     os.makedirs(save_path)
     copy_file_backup(save_path)
@@ -108,7 +108,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     # optimizer and scheduler
     optimizer = torch.optim.Adam(model_wrapper.parameters(), lr=cfg.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=cfg.milestones,
-                                                     gamma=cfg.gamma)
+                                                     gamma=cfg.gamma) # gamma为倍率,milestones为时间节点
     # Start logging
     logs = ['loss', 'acc', 'acc0', 'acc1']
     train_logs = ['train_'+log for log in logs]
@@ -198,7 +198,7 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
         same = pred_class==y
         acc = same.sum().item() / batch_size
         accs = torch.zeros(num_classes)
-        for num_class in range(num_classes):
+        for num_class in range(num_classes):  # 每个类的准确度
             accs[num_class] = (same * (y==num_class)).sum().item() / ((y==num_class).sum().item()+1e-6)
 
         # log
