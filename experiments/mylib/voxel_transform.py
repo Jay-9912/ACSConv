@@ -37,26 +37,26 @@ def preprocess_voxel(voxel,spacing,
     mapped_voxel = window_clip(resized_voxel, window_low, window_high, dtype=cast_dtype)
     return mapped_voxel
 
-def crop_at_zyx_with_dhw(voxel, zyx, dhw, fill_with):
+def crop_at_zyx_with_dhw(voxel, zyx, dhw, fill_with):  # modified   voxel:3*512*512*depth
     '''Crop and pad on the fly.'''
-    shape = voxel.shape
+    shape = voxel.shape[1:4] # 512*512*depth
     # z, y, x = zyx
     # d, h, w = dhw
     crop_pos = []
-    padding = [[0, 0], [0, 0], [0, 0]]
+    padding = [[0, 0], [0, 0], [0, 0], [0, 0]]
     for i, (center, length) in enumerate(zip(zyx, dhw)):
         assert length % 2 == 0
         # assert center < shape[i] # it's not necessary for "moved center"
         low = round(center) - length // 2
         high = round(center) + length // 2
         if low < 0:
-            padding[i][0] = int(0 - low)
+            padding[i+1][0] = int(0 - low)
             low = 0
         if high > shape[i]:
-            padding[i][1] = int(high - shape[i])
+            padding[i+1][1] = int(high - shape[i])
             high = shape[i]
         crop_pos.append([int(low), int(high)])
-    cropped = voxel[crop_pos[0][0]:crop_pos[0][1], crop_pos[1][0]:crop_pos[1][1], crop_pos[2][0]:crop_pos[2][1]]
+    cropped = voxel[:, crop_pos[0][0]:crop_pos[0][1], crop_pos[1][0]:crop_pos[1][1], crop_pos[2][0]:crop_pos[2][1]]
     if np.sum(padding) > 0:
         cropped = np.lib.pad(cropped, padding, 'constant',
                              constant_values=fill_with)
