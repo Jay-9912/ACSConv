@@ -20,13 +20,13 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import roc_auc_score
 
 from mylib.sync_batchnorm import DataParallelWithCallback
-from lidc_dataset import LIDCTwoClassDataset
+from cac_dataset import CACTwoClassDataset
 from mylib.utils import MultiAverageMeter, save_model, log_results, to_var, set_seed, \
         to_device, initialize, categorical_to_one_hot, copy_file_backup, redirect_stdout, \
         model_to_syncbn
 
-from lidc_config import LIDCClassConfig as cfg
-from lidc_config import LIDCEnv as env
+from cac_config import CACClassConfig as cfg
+from cac_config import CACEnv as env
 
 from resnet import ClsResNet
 from densenet import ClsDenseNet
@@ -34,23 +34,23 @@ from vgg import ClsVGG
 from acsconv.converters import ACSConverter, Conv3dConverter, Conv2_5dConverter
 from load_pretrained_weights_funcs import load_mednet_pretrained_weights, load_video_pretrained_weights
 
-def main(save_path=cfg.save,      # cfg 为配置文件
+def main(save_path=cfg.save,      # configuration file
          n_epochs=cfg.n_epochs, 
          seed=cfg.seed
          ):
     # set seed
     if seed is not None:
         set_seed(cfg.seed)
-    cudnn.benchmark = True   # 提高效率
+    cudnn.benchmark = True   # improve efficiency
     # back up your code
     os.makedirs(save_path)
     copy_file_backup(save_path)
     redirect_stdout(save_path)
 
     # Datasets
-    train_set = LIDCTwoClassDataset(crop_size=48, move=5, data_path=env.data, train=True)
+    train_set = CACTwoClassDataset(crop_size=[48,48,48], data_path=env.data, train=True, fill_with=-1)
     valid_set = None
-    test_set = LIDCTwoClassDataset(crop_size=48, move=5, data_path=env.data, train=False)
+    test_set = CACTwoClassDataset(crop_size=[48,48,48], data_path=env.data, train=False, fill_with=-1)
 
     # Define model
     model_dict = {'resnet18': ClsResNet, 'vgg16': ClsVGG, 'densenet121': ClsDenseNet}
@@ -72,6 +72,7 @@ def main(save_path=cfg.save,      # cfg 为配置文件
                 model = load_mednet_pretrained_weights(model, env.mednet_resnet18_pretrain_path)
     print(model)
     torch.save(model.state_dict(), os.path.join(save_path, 'model.dat'))
+    # torch.save(model.state_dict(), os.path.join(save_path, 'model.pth'))
     # train and test the model
     train(model=model, train_set=train_set, valid_set=valid_set, test_set=test_set, save=save_path, n_epochs=n_epochs)
 
@@ -98,7 +99,8 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
 
     # Wrap model for multi-GPUs, if necessary
     model_wrapper = model
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:       
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:     
+        print('multi-gpus')  
         if cfg.use_syncbn:
             print('Using sync-bn')
             model_wrapper = DataParallelWithCallback(model).cuda()
@@ -108,7 +110,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     # optimizer and scheduler
     optimizer = torch.optim.Adam(model_wrapper.parameters(), lr=cfg.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=cfg.milestones,
-                                                     gamma=cfg.gamma) # gamma为倍率,milestones为时间节点
+                                                     gamma=cfg.gamma) 
     # Start logging
     logs = ['loss', 'acc', 'acc0', 'acc1']
     train_logs = ['train_'+log for log in logs]
@@ -183,6 +185,7 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
     end = time.time()
     for batch_idx, (x, y) in enumerate(loader):
         # Create vaiables
+        x = x.float()    # turn halftensor to floattensor
         x = to_var(x)
         y = to_var(y)
         # forward and backward
@@ -198,7 +201,7 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
         same = pred_class==y
         acc = same.sum().item() / batch_size
         accs = torch.zeros(num_classes)
-        for num_class in range(num_classes):  # 每个类的准确度
+        for num_class in range(num_classes):  # calculate acc for each class
             accs[num_class] = (same * (y==num_class)).sum().item() / ((y==num_class).sum().item()+1e-6)
 
         # log
@@ -210,7 +213,7 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
         logs = [loss.item(), acc]+ \
                             [accs[i].item() for i in range(len(accs))]+ \
                             [time.time() - end]
-        meters.update(logs, batch_size)   
+        meters.update(logs, batch_size)   # calculate various index above
         end = time.time()
 
         # print stats
@@ -239,6 +242,7 @@ def test_epoch(model, loader, epoch, print_freq=1, is_test=True, writer=None):
     end = time.time()
     with torch.no_grad():
         for batch_idx, (x, y) in enumerate(loader):
+            x = x.float()   
             x = to_var(x)
             y = to_var(y)
             # forward
