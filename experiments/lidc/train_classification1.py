@@ -20,7 +20,7 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import roc_auc_score
 
 from mylib.sync_batchnorm import DataParallelWithCallback
-from cac_dataset import CACTwoClassDataset
+from cac_dataset_t2 import CACTwoClassDataset
 from mylib.utils import MultiAverageMeter, save_model, log_results, to_var, set_seed, \
         to_device, initialize, categorical_to_one_hot, copy_file_backup, redirect_stdout, \
         model_to_syncbn
@@ -189,7 +189,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
         f.write(',,,,best auc,%0.5f\n' % (best_auc))
     print('best auc: ', best_auc)
 
-def train_epoch(model, loader, optimizer,scheduler, epoch, n_epochs, print_freq=1, writer=None):
+def train_epoch(model, loader, optimizer, scheduler, epoch, n_epochs, print_freq=1, writer=None):
     '''
     One training epoch
     '''

@@ -18,15 +18,15 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
 from mylib.sync_batchnorm import DataParallelWithCallback
-from lidc_dataset import LIDCSegDataset
+from cac_dataset import CACSegDataset
 from mylib.utils import MultiAverageMeter, save_model, log_results, to_var, set_seed, \
         to_device, initialize, categorical_to_one_hot, copy_file_backup, redirect_stdout, \
         model_to_syncbn
 from mylib.metrics import cal_batch_iou, cal_batch_dice
 from mylib.loss import soft_dice_loss
 
-from lidc_config import LIDCSegConfig as cfg
-from lidc_config import LIDCEnv as env
+from cac_config import CACSegConfig as cfg
+from cac_config import CACEnv as env
 
 from resnet import FCNResNet
 from densenet import FCNDenseNet
@@ -49,13 +49,13 @@ def main(save_path=cfg.save,
     redirect_stdout(save_path)
 
     # Datasets
-    train_set = LIDCSegDataset(crop_size=48, move=5, data_path=env.data, train=True)
+    train_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, datatype=0)
     valid_set = None
-    test_set = LIDCSegDataset(crop_size=48, move=5, data_path=env.data, train=False)
+    test_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, datatype=1)
 
     # Define model
     model_dict = {'resnet18': FCNResNet, 'vgg16': FCNVGG, 'densenet121': FCNDenseNet}
-    model = model_dict[cfg.backbone](pretrained=cfg.pretrained, num_classes=2, backbone=cfg.backbone)
+    model = model_dict[cfg.backbone](pretrained=cfg.pretrained, num_classes=3, backbone=cfg.backbone) # modified
 
     # convert to counterparts and load pretrained weights according to various convolution
     if cfg.conv=='ACSConv':
@@ -99,6 +99,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     # Wrap model for multi-GPUs, if necessary
     model_wrapper = model
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:       
+        print('multi gpus')
         if cfg.use_syncbn:
             print('Using sync-bn')
             model_wrapper = DataParallelWithCallback(model).cuda()
@@ -109,7 +110,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=cfg.milestones,
                                                      gamma=cfg.gamma)
     # Start logging
-    logs = ['loss', 'iou', 'dice', 'iou0', 'iou1', 'dice0', 'dice1', 'dice_global']
+    logs = ['loss', 'iou', 'dice', 'iou0', 'iou1', 'iou2', 'dice0', 'dice1', 'dice2', 'dice_global']  # modified
     train_logs = ['train_'+log for log in logs]
     test_logs = ['test_'+log for log in logs]
 
@@ -144,7 +145,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
             model=model_wrapper,
             loader=test_loader,
             epoch=epoch,
-            is_test=True,
+            is_test=False,  # valid
             writer = writer
         )
         scheduler.step()
@@ -185,11 +186,12 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
     union = 0
     end = time.time()
     for batch_idx, (x, y) in enumerate(loader):
+        x = x.float()
         x = to_var(x)
         y = to_var(y)
         # forward and backward
         pred_logit = model(x)
-        y_one_hot = categorical_to_one_hot(y, dim=1, expand_dim=False)
+        y_one_hot = categorical_to_one_hot(y, dim=1, expand_dim=False, n_classes=3)  # b*n*h*w*d
 
         loss = soft_dice_loss(pred_logit, y_one_hot)
 
@@ -198,12 +200,12 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
         optimizer.step()
         # calculate metrics
         pred_classes = pred_logit.argmax(1)
-        intersection += ((pred_classes==1) * (y[:,0]==1)).sum().item()
-        union += ((pred_classes==1).sum() + y[:,0].sum()).item()
+        intersection += ((pred_classes==1) * (y[:,0]==1)).sum().item()+((pred_classes==2) * (y[:,0]==2)).sum().item()  # maybe inaccurate
+        union += ((pred_classes==1).sum() + (y[:,0]==1).sum()).item()+((pred_classes==2).sum() + (y[:,0]==2).sum()).item()
         batch_size = y.size(0)
 
-        iou = cal_batch_iou(pred_logit, y_one_hot)
-        dice = cal_batch_dice(pred_logit, y_one_hot)
+        iou = cal_batch_iou(pred_logit, y_one_hot) # n
+        dice = cal_batch_dice(pred_logit, y_one_hot) # n
         # log
         writer.add_scalar('train_loss_logs', loss.item(), iteration)
         with open(os.path.join(cfg.save, 'loss_logs.csv'), 'a') as f:
@@ -244,15 +246,18 @@ def test_epoch(model, loader, epoch, print_freq=1, is_test=True, writer=None):
     end = time.time()
     with torch.no_grad():
         for batch_idx, (x, y) in enumerate(loader):
+            x = x.float()
             x = to_var(x)
             y = to_var(y)
             # forward
             pred_logit = model(x)
             # calculate metrics
-            y_one_hot = categorical_to_one_hot(y, dim=1, expand_dim=False)
+            y_one_hot = categorical_to_one_hot(y, dim=1, expand_dim=False, n_classes=3)
             pred_classes = pred_logit.argmax(1)
-            intersection += ((pred_classes==1) * (y[:,0]==1)).sum().item()
-            union += ((pred_classes==1).sum() + y[:,0].sum()).item()
+            intersection += ((pred_classes==1) * (y[:,0]==1)).sum().item()+((pred_classes==2) * (y[:,0]==2)).sum().item()  # maybe inaccurate
+            union += ((pred_classes==1).sum() + (y[:,0]==1).sum()).item()+((pred_classes==2).sum() + (y[:,0]==2).sum()).item()
+            # intersection += ((pred_classes==1) * (y[:,0]==1)).sum().item()
+            # union += ((pred_classes==1).sum() + y[:,0].sum()).item()
 
             loss = soft_dice_loss(pred_logit, y_one_hot)
             batch_size = y.size(0)

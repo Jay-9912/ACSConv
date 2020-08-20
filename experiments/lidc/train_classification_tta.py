@@ -20,7 +20,7 @@ from tensorboardX import SummaryWriter
 from sklearn.metrics import roc_auc_score
 
 from mylib.sync_batchnorm import DataParallelWithCallback
-from cac_dataset import CACTwoClassDataset
+from cac_dataset_tta import CACTwoClassDataset
 from mylib.utils import MultiAverageMeter, save_model, log_results, to_var, set_seed, \
         to_device, initialize, categorical_to_one_hot, copy_file_backup, redirect_stdout, \
         model_to_syncbn
@@ -71,7 +71,7 @@ def main(save_path=cfg.save,      # configuration file
                 model = load_video_pretrained_weights(model, env.video_resnet18_pretrain_path)
             elif cfg.pretrained_3d == 'mednet':
                 model = load_mednet_pretrained_weights(model, env.mednet_resnet18_pretrain_path)
-    print(model)
+    # print(model)
     torch.save(model.state_dict(), os.path.join(save_path, 'model.dat'))
     # torch.save(model.state_dict(), os.path.join(save_path, 'model.pth'))
     # train and test the model
@@ -267,27 +267,39 @@ def test_epoch(model, loader, epoch, print_freq=1, is_test=True, writer=None):
     end = time.time()
     with torch.no_grad():
         for batch_idx, (x, y) in enumerate(loader):
-            x = x.float()   
-            x = to_var(x)
-            y = to_var(y)
+            x = x.float()   # b*5*3*48*48*48
+            x = to_var(x)   
+            y = to_var(y)   # b*5
+            batch_size = y.size(0)
             # forward
-            pred_logits = model(x)
-            loss = F.cross_entropy(pred_logits, y)
+            rep=x.shape[1]
+            loss=0
+            pred_probs=torch.zeros((batch_size,rep))
+            pred_probs = pred_probs.float()
+            pred_probs = to_var(pred_probs)
+            for i in range(rep):
+                pred_logits = model(x[:,i]) # b*2
+                loss += F.cross_entropy(pred_logits, y).item()
+                pred_probs[:,i] = pred_logits.softmax(-1)[:,1]
+            loss /= float(rep)
+            pred_probs=torch.max(pred_probs,1)[0]
+            pred_probs=torch.unsqueeze(pred_probs,1) # b*1
+            pred_probs=torch.cat((to_var(torch.ones((batch_size,1)))-pred_probs,pred_probs),1) # b*2
             # calculate metrics
-            pred_class = pred_logits.max(-1)[1]
+            pred_class = pred_probs.max(-1)[1]
             pred_all_classes.append(pred_class.cpu())
-            pred_probs = pred_logits.softmax(-1)
+            
             pred_all_probs.append(pred_probs.cpu())
             gt_classes.append(y.cpu())
-            batch_size = y.size(0)
-            num_classes = pred_logits.size(1)
+
+            num_classes = pred_probs.size(1)
             same = pred_class==y
             acc = same.sum().item() / batch_size
             accs = torch.zeros(num_classes)
             for num_class in range(num_classes):
                 accs[num_class] = (same * (y==num_class)).sum().item() / ((y==num_class).sum().item()+ 1e-6)
 
-            logs = [loss.item(), acc]+ \
+            logs = [loss, acc]+ \
                                 [accs[i].item() for i in range(len(accs))]+ \
                                 [time.time() - end]
             meters.update(logs, batch_size)   
@@ -321,6 +333,13 @@ def test_epoch(model, loader, epoch, print_freq=1, is_test=True, writer=None):
     print(len(pat_probs))
     auc_pat=roc_auc_score(pat_classes, pat_probs)
     return meters.avg[:-1]+[auc,auc_pat]
+
+# def log_probs(save, epoch, log_dict):
+#     with open(os.path.join(save, 'logs.csv'), 'a') as f:
+#         f.write('%03d,'%((epoch + 1),))
+#         for value in log_dict.values():
+#             f.write('%0.6f,' % (value,))
+#         f.write('\n')
 
 
 if __name__ == '__main__':
