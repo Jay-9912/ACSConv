@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
 from mylib.sync_batchnorm import DataParallelWithCallback
-from cac_dataset import CACSegDataset
+from cac_dataset_tta2 import CACSegDataset
 from mylib.utils import MultiAverageMeter, save_model, log_results, to_var, set_seed, \
         to_device, initialize, categorical_to_one_hot, copy_file_backup, redirect_stdout, \
         model_to_syncbn
@@ -49,12 +49,12 @@ def main(save_path=cfg.save,
     redirect_stdout(save_path)
 
     # Datasets
-    train_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, datatype=0)
-    valid_set = None
-    test_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, datatype=1)
+    train_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, random=cfg.random, datatype=0)
+    valid_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, random=cfg.random, datatype=1)
+    test_set = CACSegDataset(crop_size=[48,48,48], data_path=env.data, random=cfg.random, datatype=2)
 
     # Define model
-    model_dict = {'resnet18': FCNResNet, 'vgg16': FCNVGG, 'densenet121': FCNDenseNet}
+    model_dict = {'resnet18': FCNResNet,'resnet34': FCNResNet,'resnet50': FCNResNet,'resnet101': FCNResNet, 'vgg16': FCNVGG, 'densenet121': FCNDenseNet}
     model = model_dict[cfg.backbone](pretrained=cfg.pretrained, num_classes=3, backbone=cfg.backbone) # modified
 
     # convert to counterparts and load pretrained weights according to various convolution
@@ -112,9 +112,10 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     # Start logging
     logs = ['loss', 'iou', 'dice', 'iou0', 'iou1', 'iou2', 'dice0', 'dice1', 'dice2', 'dice_global']  # modified
     train_logs = ['train_'+log for log in logs]
+    valid_logs = ['val_'+log for log in logs]
     test_logs = ['test_'+log for log in logs]
 
-    log_dict = OrderedDict.fromkeys(train_logs+test_logs, 0)
+    log_dict = OrderedDict.fromkeys(train_logs+valid_logs+test_logs, 0)
     with open(os.path.join(save, 'logs.csv'), 'w') as f:
         f.write('epoch,')
         for key in log_dict.keys():
@@ -129,7 +130,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
     global iteration
     iteration = 0
     for epoch in range(n_epochs):
-        os.makedirs(os.path.join(cfg.save, 'epoch_{}'.format(epoch)))
+        
         print('learning rate: ', scheduler.get_lr())
         # train epoch
         train_meters = train_epoch(
@@ -140,12 +141,20 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
             n_epochs=n_epochs,
             writer=writer
         )
+            # valid epoch
+        valid_meters = test_epoch(
+            model=model_wrapper,
+            loader=valid_loader,
+            epoch=epoch,
+            is_test=False,
+            writer=writer
+        )
         # test epoch
         test_meters = test_epoch(
             model=model_wrapper,
             loader=test_loader,
             epoch=epoch,
-            is_test=False,  # valid
+            is_test=True,  # valid
             writer = writer
         )
         scheduler.step()
@@ -159,6 +168,7 @@ def train(model, train_set, test_set, save, valid_set, n_epochs):
         log_results(save, epoch, log_dict, writer=writer)
         # save model checkpoint
         if cfg.save_all:
+            os.makedirs(os.path.join(cfg.save, 'epoch_{}'.format(epoch)))
             torch.save(model.state_dict(), os.path.join(save, 'epoch_{}'.format(epoch), 'model.dat'))
 
         if log_dict['test_dice_global'] > best_dice_global:
@@ -192,7 +202,7 @@ def train_epoch(model, loader, optimizer, epoch, n_epochs, print_freq=1, writer=
         # forward and backward
         pred_logit = model(x)
         y_one_hot = categorical_to_one_hot(y, dim=1, expand_dim=False, n_classes=3)  # b*n*h*w*d
-
+        # print(pred_logit.size(),y_one_hot.size())
         loss = soft_dice_loss(pred_logit, y_one_hot)
 
         optimizer.zero_grad()
