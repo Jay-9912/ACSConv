@@ -175,20 +175,18 @@ class ClassTransform:
         else:
             print('error')
 
-        if self.datatype==0:
-            if self.move is not None:
-                center = random_center(shape, self.move)
-            else:
-                center = np.array(shape) // 2
-            voxel_ret = crop(voxel, center, self.size)
-            angle = np.random.randint(4, size=3)
-            voxel_ret = np.stack([rotation(voxel_ret[0], angle=angle),rotation(voxel_ret[1], angle=angle),rotation(voxel_ret[2], angle=angle)],0)
 
-            axis = np.random.randint(4) - 1
-            voxel_ret = np.stack([reflection(voxel_ret[0], axis=axis),reflection(voxel_ret[1], axis=axis),reflection(voxel_ret[2], axis=axis)],0)
+        if self.move is not None:
+            center = random_center(shape, self.move)
         else:
             center = np.array(shape) // 2
-            voxel_ret = crop(voxel, center, self.size)
+        voxel_ret = crop(voxel, center, self.size)
+        angle = np.random.randint(4, size=3)
+        voxel_ret = np.stack([rotation(voxel_ret[0], angle=angle),rotation(voxel_ret[1], angle=angle),rotation(voxel_ret[2], angle=angle)],0)
+
+        axis = np.random.randint(4) - 1
+        voxel_ret = np.stack([reflection(voxel_ret[0], axis=axis),reflection(voxel_ret[1], axis=axis),reflection(voxel_ret[2], axis=axis)],0)
+
 
         return voxel_ret,lb
         # if self.copy_channels:
