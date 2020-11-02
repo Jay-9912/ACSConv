@@ -60,8 +60,33 @@ def crop_at_zyx_with_dhw(voxel, zyx, dhw, fill_with):  # modified   voxel:3*512*
     if np.sum(padding) > 0:
         cropped = np.lib.pad(cropped, padding, 'constant',
                              constant_values=fill_with)
-    return cropped
+    return cropped, crop_pos
 
+def crop_at_zyx_with_dhw_3d(voxel, zyx, dhw, fill_with):
+    '''Crop and pad on the fly.'''
+    shape = voxel.shape
+    # z, y, x = zyx
+    # d, h, w = dhw
+    crop_pos = []
+    padding = [[0, 0], [0, 0], [0, 0]]
+    for i, (center, length) in enumerate(zip(zyx, dhw)):
+        assert length % 2 == 0
+        # assert center < shape[i] # it's not necessary for "moved center"
+        low = round(center) - length // 2
+        high = round(center) + length // 2
+        if low < 0:
+            padding[i][0] = int(0 - low)
+            low = 0
+        if high > shape[i]:
+            padding[i][1] = int(high - shape[i])
+            high = shape[i]
+        crop_pos.append([int(low), int(high)])
+    cropped = voxel[crop_pos[0][0]:crop_pos[0][1], crop_pos[1][0]:crop_pos[1][1], crop_pos[2][0]:crop_pos[2][1]]
+    if np.sum(padding) > 0:
+        cropped = np.lib.pad(cropped, padding, 'constant',
+                             constant_values=fill_with)
+    return cropped
+    
 def window_clip(v, window_low=-1024, window_high=400, dtype=np.uint8):
     '''Use lung windown to map CT voxel to grey.'''
     # assert v.min() <= window_low
@@ -105,6 +130,14 @@ def reflection(array, axis):
     return ref
 
 
+def crop_4d(array, zyx, dhw):
+    z, y, x = zyx
+    d, h, w = dhw
+    cropped = array[:,z - d // 2:z + d // 2,
+              y - h // 2:y + h // 2,
+              x - w // 2:x + w // 2]
+    return cropped
+    
 def crop(array, zyx, dhw):
     z, y, x = zyx
     d, h, w = dhw
@@ -117,3 +150,16 @@ def random_center(shape, move):
     offset = np.random.randint(-move, move + 1, size=3)
     zyx = np.array(shape) // 2 + offset
     return zyx
+
+def random_center_mask(mask,loc):
+    if loc=='L':
+        site=np.argwhere(mask==1)
+        site=np.concatenate((site,np.argwhere(mask==3)))
+        l=site.shape[0]
+        return site[np.random.randint(0,l)]
+    elif loc=='R':
+        site=np.argwhere(mask==2)
+        site=np.concatenate((site,np.argwhere(mask==4)))
+        l=site.shape[0]
+        return site[np.random.randint(0,l)]
+    

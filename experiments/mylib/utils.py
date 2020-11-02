@@ -221,7 +221,7 @@ def copy_file_backup(save):
     shutil.copytree(os.path.join(sys.path[0], '../../', 'acsconv'), os.path.join(backup_dir, 'acsconv'))
     os.makedirs(os.path.join(backup_dir, 'current_experiment'))
     for file_path in os.listdir(sys.path[0]):
-        if file_path not in ['tmp', 'data', '__pycache__']:
+        if file_path not in ['logs','tmp', 'data', '__pycache__']: # modified
             shutil.copy(os.path.join(sys.path[0], file_path), os.path.join(backup_dir, 'current_experiment'))
 
 
