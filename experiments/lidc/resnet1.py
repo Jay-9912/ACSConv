@@ -166,19 +166,7 @@ class Bottleneck(nn.Module):
         self.stride = stride
 
     def forward(self, x):
-        # x.requires_grad_(True)
         residual = x
-
-        # out = self.conv1(x)
-        # out = self.bn1(out)
-        # out = self.relu(out)
-
-        # out = self.conv2(out)
-        # out = self.bn2(out)
-        # out = self.relu(out)
-
-        # out = self.conv3(out)
-        # out = self.bn3(out)
 
         out = self.conv1(x)
         out = self.bn1(out)
@@ -190,6 +178,7 @@ class Bottleneck(nn.Module):
 
         out = self.conv3(out)
         out = self.bn3(out)
+
         if self.downsample is not None:
             residual = self.downsample(x)
         
@@ -198,16 +187,6 @@ class Bottleneck(nn.Module):
 
         return out
 
-class ModuleWrapperIgnores2ndArg(nn.Module):
-    def __init__(self, module):
-        super().__init__()
-        self.module = module
-
-    def forward(self,x, dummy_arg=None):
-        assert dummy_arg is not None
-        x = self.module(x)
-        return x
-        
 class ResNet(nn.Module):
 
     def __init__(self, block, layers, checkpoint, pooling):
@@ -224,9 +203,7 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        # self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
-        # self.module_wrapper = ModuleWrapperIgnores2ndArg(self.layer3)
-        
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -251,30 +228,29 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x, training):
-        # x.requires_grad_(True)
+    def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         if self.pooling:
             x = self.maxpool(x)
-        
-        x2 = x.clone()
-        if self.checkpoint and training:
-            x = checkpoint_sequential(self.layer1, 3, x)
-            x = checkpoint_sequential(self.layer2, 3, x)
+        if self.checkpoint:
+            x2 = x.clone()
+            x = checkpoint_sequential(self.layer1, 2, x)   
+            x = checkpoint_sequential(self.layer2, 2, x)
+
             x1 = x.clone()
-        
-            x = checkpoint_sequential(self.layer3, 3, x)
-            x = checkpoint_sequential(self.layer4, 3, x)        
+            x = checkpoint_sequential(self.layer3, 2, x)
+            x = checkpoint_sequential(self.layer4, 2, x)
         else:
+            x2 = x.clone()
             x = self.layer1(x)
             x = self.layer2(x)
+    
             x1 = x.clone()
-            
             x = self.layer3(x)
             x = self.layer4(x)
-
+        
         return x, x1, x2
 
 class FCNHead(nn.Sequential):
@@ -289,31 +265,28 @@ class FCNHead(nn.Sequential):
         super(FCNHead, self).__init__(*layers)
 
 class FCNResNet(nn.Module):
-    def __init__(self, pretrained, num_classes, backbone='resnet18', checkpoint=False):
+    def __init__(self, pretrained, num_classes, backbone='resnet18'):
         super().__init__()
-        self.backbone = globals()[backbone](pretrained=pretrained, checkpoint=checkpoint, pooling=False)
-        if backbone!='resnet50':
-            self.conv1 = nn.Conv2d((128+512), 512, kernel_size=1, stride=1, padding=0, bias=False)
-            self.conv2 = nn.Conv2d(64+512, 512, kernel_size=1, stride=1, padding=0, bias=False)
-        else:
-            self.conv1 = nn.Conv2d((2048+512), 512, kernel_size=1, stride=1, padding=0, bias=False)
-            self.conv2 = nn.Conv2d(64+512, 512, kernel_size=1, stride=1, padding=0, bias=False)
+        self.backbone = globals()[backbone](pretrained=pretrained)
+        self.conv1 = nn.Conv2d((128+512), 512, kernel_size=1, stride=1, padding=0, bias=False)
+        self.conv2 = nn.Conv2d(64+512, 512, kernel_size=1, stride=1, padding=0, bias=False)
         self.classifier = FCNHead(in_channels=512, channels=num_classes)
     
-    def forward(self, x, training=True):
-        features, features1, features2 = self.backbone(x, training)
+    def forward(self, x):
+        features, features1, features2 = self.backbone(x)
         features_cat1 = torch.cat([features1, F.interpolate(features, scale_factor=2)], dim=1)
         features_cat1 = self.conv1(features_cat1)
         features_cat2 = torch.cat([features2, F.interpolate(features_cat1, scale_factor=2)], dim=1)
         features_cat2 = self.conv2(features_cat2)
         features = features_cat2
+
         out = self.classifier(features)
         return out
 
 class ClsResNet(nn.Module):
     def __init__(self, pretrained, num_classes, backbone, checkpoint, pooling):
         super().__init__()
-        self.expansion = 4 if backbone == 'resnet50' or backbone == 'resnet101' else 1
+        self.expansion = 4 if backbone == 'resnet50' else 1
         self.backbone = globals()[backbone](pretrained=pretrained, checkpoint=checkpoint, pooling=pooling)
         self.fc = nn.Linear(512 * self.expansion, num_classes, bias=True)
     
