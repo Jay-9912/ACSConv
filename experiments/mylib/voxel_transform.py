@@ -162,4 +162,10 @@ def random_center_mask(mask,loc):
         site=np.concatenate((site,np.argwhere(mask==4)))
         l=site.shape[0]
         return site[np.random.randint(0,l)]
+        
+def random_center_mask_mood(mask):
+        site=np.argwhere(mask==2)
+        site=np.concatenate((site,np.argwhere(mask==1)))
+        l=site.shape[0]
+        return site[np.random.randint(0,l)]
     
